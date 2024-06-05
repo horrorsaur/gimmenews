@@ -24,3 +24,5 @@
 
 # nncp
 !nncp/
+
+!docs/*
