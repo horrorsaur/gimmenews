@@ -79,15 +79,21 @@ func CfgNew() {}
 
 func Stat() error {
 	cmd := stat.load()
-	if cmd.Err != nil {
-		return cmd.Err
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
 	}
 
-	return nil
+	// Print the output to the configured Output writer
+	_, err = stat.Output.Write(output)
+	return err
 }
 
-func (c *Command) execute() {
-	// TODO: Add in arguments
+func (c *Command) execute(args ...string) error {
+	cmd := exec.Command(c.binaryPath(), args...)
+	cmd.Stdout = c.Output
+	cmd.Stderr = c.Output
+	return cmd.Run()
 }
 
 // Load builds an 'os/exec' Command
