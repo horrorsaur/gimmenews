@@ -100,19 +100,17 @@ func Stat() ([]byte, error) {
 func (c *Command) load(args ...string) *exec.Cmd {
 	cmd := exec.Command(c.fullPath(), args...)
 
-	if c.out != nil {
-		logger.Print("setting stdout")
-		cmd.Stdout = c.out
+	if c.out == nil {
+		logger.Print("creating default stdout writer")
+		c.out = os.Stdout
 	}
+	cmd.Stdout = c.out
 
-	if c.err != nil {
-		logger.Print("setting stderr")
-		cmd.Stderr = c.err
+	if c.err == nil {
+		logger.Print("creating default stderr writer")
+		c.err = os.Stderr
 	}
-
-	logger.Print("using default in-memory reader")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = c.err
 
 	return cmd
 }
