@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 )
@@ -12,7 +13,8 @@ type (
 		Name string
 		Path string
 
-		Output io.Writer
+		out io.Writer
+		err io.Writer
 	}
 
 	CommandOpts struct {
@@ -20,19 +22,19 @@ type (
 		Name string
 		// The path to the command's binary
 		Path string
-		// Where the command will write to
-		Output io.Writer
 	}
 )
 
 var (
+	logger log.Logger = *log.New(os.Stdout, "[COMMANDS ]", 1)
+
 	newCfg Command = Command{
 		Name: "nncp-cfgnew",
 		Path: "/usr/bin/",
 	}
 
 	stat Command = Command{
-		Name: "nncp-cfgstat",
+		Name: "nncp-stat",
 		Path: "/usr/bin/",
 	}
 
@@ -55,6 +57,10 @@ var (
 		Name: "nncp-toss",
 		Path: "/usr/bin/",
 	}
+
+	// commands map[string]Command = map[string]Command{
+	// 	"stat": stat,
+	// }
 )
 
 func NewCommand(opts CommandOpts) (Command, error) {
@@ -70,37 +76,47 @@ func NewCommand(opts CommandOpts) (Command, error) {
 
 	cmd.Name = opts.Name
 	cmd.Path = opts.Path
-	cmd.Output = os.Stdout
+	cmd.out = os.Stdout
 
 	return cmd, err
 }
 
-func CfgNew() {}
+func (c *Command) SetOutput(w io.Writer) {
+	c.out = w
+}
 
-func Stat() error {
+func Stat() ([]byte, error) {
 	cmd := stat.load()
-	output, err := cmd.CombinedOutput()
+
+	dat, err := cmd.CombinedOutput()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Print the output to the configured Output writer
-	_, err = stat.Output.Write(output)
-	return err
+	return dat, nil
 }
 
-func (c *Command) execute(args ...string) error {
-	cmd := exec.Command(c.binaryPath(), args...)
-	cmd.Stdout = c.Output
-	cmd.Stderr = c.Output
-	return cmd.Run()
+// Load builds an exec.Cmd passing 'args' for additional nncp options
+func (c *Command) load(args ...string) *exec.Cmd {
+	cmd := exec.Command(c.fullPath(), args...)
+
+	if c.out != nil {
+		logger.Print("setting stdout")
+		cmd.Stdout = c.out
+	}
+
+	if c.err != nil {
+		logger.Print("setting stderr")
+		cmd.Stderr = c.err
+	}
+
+	logger.Print("using default in-memory reader")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd
 }
 
-// Load builds an 'os/exec' Command
-func (c *Command) load() *exec.Cmd {
-	return exec.Command(c.binaryPath())
-}
-
-func (c *Command) binaryPath() string {
+func (c *Command) fullPath() string {
 	return c.Path + c.Name
 }
