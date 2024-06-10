@@ -2,23 +2,28 @@ package commands
 
 import (
 	"errors"
-	"io"
 	"log"
 	"os"
 	"os/exec"
 )
 
+// path, err := exec.LookPath("nncp-cfgnew")
+
 type (
 	Command struct {
-		Name string
-		Path string
+		*exec.Cmd
 
-		out io.Writer
-		err io.Writer
+		// The actual name of the command invoked (e.g., nncp-toss)
+		Name string
+
+		// Embedded through exec.Cmd. This field must be set
+		//
+		// The path to the command's binary
+		Path string
 	}
 
 	CommandOpts struct {
-		// The name of the NNCP command
+		// The actual name of the command invoked (e.g., nncp-toss)
 		Name string
 		// The path to the command's binary
 		Path string
@@ -26,17 +31,7 @@ type (
 )
 
 var (
-	logger log.Logger = *log.New(os.Stdout, "[COMMANDS ]", 1)
-
-	newCfg Command = Command{
-		Name: "nncp-cfgnew",
-		Path: "/usr/bin/",
-	}
-
-	stat Command = Command{
-		Name: "nncp-stat",
-		Path: "/usr/bin/",
-	}
+	logger log.Logger = *log.New(os.Stdout, "[COMMANDS] ", 1)
 
 	daemon Command = Command{
 		Name: "nncp-daemon",
@@ -57,62 +52,31 @@ var (
 		Name: "nncp-toss",
 		Path: "/usr/bin/",
 	}
-
-	// commands map[string]Command = map[string]Command{
-	// 	"stat": stat,
-	// }
 )
 
+// New builds a Command wrapper, taking care of calling Command.load()
 func NewCommand(opts CommandOpts) (Command, error) {
 	var (
-		cmd Command
+		c   Command
 		err error
 	)
 
 	if opts.Name == "" || opts.Path == "" {
 		err = errors.New("Received blank name or path value")
-		return cmd, err
+		return c, err
 	}
 
-	cmd.Name = opts.Name
-	cmd.Path = opts.Path
-	cmd.out = os.Stdout
+	c.Name = opts.Name
+	c.Path = opts.Path
 
-	return cmd, err
+	c.load()
+
+	return c, err
 }
 
-func (c *Command) SetOutput(w io.Writer) {
-	c.out = w
-}
-
-func Stat() ([]byte, error) {
-	cmd := stat.load()
-
-	dat, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
-
-	return dat, nil
-}
-
-// Load builds an exec.Cmd passing 'args' for additional nncp options
-func (c *Command) load(args ...string) *exec.Cmd {
-	cmd := exec.Command(c.fullPath(), args...)
-
-	if c.out == nil {
-		logger.Print("creating default stdout writer")
-		c.out = os.Stdout
-	}
-	cmd.Stdout = c.out
-
-	if c.err == nil {
-		logger.Print("creating default stderr writer")
-		c.err = os.Stderr
-	}
-	cmd.Stderr = c.err
-
-	return cmd
+// Load passes callers args to the Command struct
+func (c *Command) load(args ...string) {
+	c.Cmd = exec.Command(c.fullPath(), args...)
 }
 
 func (c *Command) fullPath() string {
