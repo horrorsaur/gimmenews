@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"os"
 
@@ -12,7 +11,13 @@ import (
 var (
 	userHome string
 
-	defaultCfgPath string = "/etc/nnncp.hjson"
+	defaultCfgPath string = "/etc/nncp.hjson"
+)
+
+type (
+	App struct {
+		config *commands.Config
+	}
 )
 
 func init() {
@@ -28,12 +33,20 @@ func init() {
 }
 
 func main() {
-	if _, err := os.Stat(defaultCfgPath); errors.Is(err, os.ErrNotExist) {
-		log.Printf("calling nncp-cfgnew to generate initial configuration")
+	app := &App{}
+	_, err := os.Stat(defaultCfgPath)
 
-		config := commands.NewCfg()
-		fmt.Printf("config: %v", config)
+	var nncpCfg commands.Config
+	if errors.Is(err, os.ErrNotExist) {
+		log.Printf("calling nncp-cfgnew to generate initial configuration")
+		nncpCfg = commands.NewCfg(defaultCfgPath)
 	}
 
-	fmt.Println("found conf file, skiping generate")
+	// grab relevant nncp configuration (default "/etc/nncp.hjson")
+	nncpCfg, err = commands.Load(defaultCfgPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	app.config = &nncpCfg
 }

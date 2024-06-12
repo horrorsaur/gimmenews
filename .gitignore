@@ -26,3 +26,5 @@
 !nncp/
 
 !docs/*
+
+!.env.example

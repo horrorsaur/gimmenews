@@ -64,6 +64,8 @@ https://github.com/InterNetNews/inn
 https://pkg.go.dev/github.com/dustin/go-nntp@v0.0.0-20210723005859-f00d51cf8cc1
 https://pkg.go.dev/net/textproto#pkg-overview
 
+https://groups.google.com/g/comp.mail.uucp/c/E1iFGMkULiU
+
 [nncp repo on Salsa](https://salsa.debian.org/go-team/packages/nncp)
 [NNCP in Docker](https://salsa.debian.org/jgoerzen/docker-nncp)
 [Usenet Wikipedia](https://en.wikipedia.org/wiki/Usenet)
