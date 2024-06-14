@@ -26,12 +26,25 @@ type (
 	Client struct {
 		*textproto.Conn
 
+		connInfo ServerConnectionInfo
+
 		log *log.Logger
 
+		// indicates whether we are using TLS on DEFAULT_TLS_PORT (563)
+		secure bool
 		// TODO: Concurrent connections
 		maxConnections uint8
 		// Describes the capabilities of the server state. This can change based on server state (e.g., preauth -> auth)
 		capabilities []string
+	}
+
+	ServerConnectionInfo struct {
+		ServerName string
+		TLSVersion uint16
+	}
+
+	TLS struct {
+		*tls.Conn
 	}
 )
 
@@ -39,19 +52,40 @@ func NewClient(host, port string, insecure *bool, clogger *log.Logger) *Client {
 	addr := net.JoinHostPort(host, strconv.Itoa(DEFAULT_TLS_PORT))
 
 	if *insecure {
-		clogger.Printf("WARNING. connecting on unencrypted port!")
-		addr = net.JoinHostPort(host, port)
+		clogger.Printf(`
+			================ WARNING ================
+			Client has been flagged for an unencrypted connection!
+			=========================================
+		`)
+		clogger.Printf("connecting to '%s'...", addr)
+
+		conn, err := textproto.Dial("tcp", net.JoinHostPort(host, port))
+		if err != nil {
+			clogger.Fatal(err)
+		}
+
+		return &Client{
+			Conn:   conn,
+			secure: false,
+			log:    clogger,
+		}
 	}
 
-	clogger.Printf("attempting connection to '%s'...", addr)
-	conn, err := textproto.Dial("tcp", addr)
+	clogger.Printf("connecting to '%s'... (TLS)", addr)
+	tlsConf := &tls.Config{InsecureSkipVerify: false}
+	conn, err := tls.Dial("tcp", addr, tlsConf)
 	if err != nil {
 		clogger.Fatal(err)
 	}
 
-	// tls.Dial("tcp", addr, &tls.Config{})
+	connState := conn.ConnectionState()
+	clogger.Printf("Server Name: %s, TLS Version: %d", connState.ServerName, connState.Version)
+	connInfo := ServerConnectionInfo{ServerName: connState.ServerName, TLSVersion: connState.Version}
 
-	code, msg, err := conn.ReadCodeLine(STATUS_AVAILABLE_POSTING_ALLOWED)
+	// textproto gives us some nice, higher level abstractions from the protocol
+	txConn := textproto.NewConn(conn)
+
+	code, msg, err := txConn.ReadCodeLine(STATUS_AVAILABLE_POSTING_ALLOWED)
 	if err != nil {
 		clogger.Fatal(err)
 	}
@@ -61,9 +95,12 @@ func NewClient(host, port string, insecure *bool, clogger *log.Logger) *Client {
 	}
 
 	clogger.Printf("GOT %d %s", code, msg)
+
 	return &Client{
-		Conn: conn,
-		log:  clogger,
+		Conn:     txConn,
+		connInfo: connInfo,
+		secure:   true,
+		log:      clogger,
 	}
 }
 
@@ -83,8 +120,8 @@ func (c *Client) GetCapabilities() []string {
 // Syntax
 //
 //	LIST [keyword [wildmat|argument]]
-func (c *Client) List() {
-	resp, err := c.sendCommand(215, "LIST alt")
+func (c *Client) List(keyword string) {
+	resp, err := c.sendCommand(215, "LIST "+keyword)
 	if err != nil {
 		c.log.Fatal(err)
 	}

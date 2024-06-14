@@ -14,5 +14,6 @@ type (
 		Arguments string
 
 		// '*' and '?' are always wildcards.
+		Wildmat string
 	}
 )

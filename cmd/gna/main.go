@@ -26,10 +26,6 @@ func main() {
 		select {
 		case <-time.After(3 * time.Second):
 			c.GetCapabilities()
-
-			time.Sleep(2 * time.Second)
-
-			c.List()
 		}
 
 		break
