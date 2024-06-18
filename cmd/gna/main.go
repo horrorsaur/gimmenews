@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/horrorsaur/gimmenews/internal/nntp"
 	"github.com/joho/godotenv"
@@ -78,7 +77,7 @@ func main() {
 
 	// WIP remove
 	if DEBUG {
-		host = "127.0.0.1"
+		// host = "127.0.0.1"
 		f = os.Stdout
 	}
 

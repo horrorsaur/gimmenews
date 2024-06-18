@@ -127,23 +127,28 @@ Now connecting to '%s'
 func (c *Client) SendCapabilities(keyword string) {
 	// keyword is reserved for extension modules
 	resp := c.sendCommand(STATUS_CAPABILITIES, fmt.Sprint("CAPABILITIES ", keyword))
-	c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
 
-	// supportedCapas := make(map[string]bool)
-	// ignoredCapas := make(map[string]bool)
-	// for _, capa := range resp {
-	// 	if supportedCapabilities[capa] {
-	// 		supportedCapas[capa] = true
-	// 	} else {
-	// 		ignoredCapas[capa] = true
-	// 	}
-	// }
-	//
-	// c.log.Printf("Supported Capabilities: %v", supportedCapas)
-	// c.log.Printf("Ignored Capabilities: %v", ignoredCapas)
-	//
-	// c.capabilities = supportedCapas
-	// c.ignoredCapabilities = ignoredCapas
+	switch msg := resp.Message.(type) {
+	case Msg:
+		c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
+	case MultiMsg:
+		supportedCapas := make(map[string]bool)
+		ignoredCapas := make(map[string]bool)
+
+		for _, capa := range msg {
+			if supportedCapabilities[capa] {
+				supportedCapas[capa] = true
+			} else {
+				ignoredCapas[capa] = true
+			}
+		}
+
+		c.log.Printf("Supported Capabilities: %v", supportedCapas)
+		c.log.Printf("Ignored Capabilities: %v", ignoredCapas)
+
+		c.capabilities = supportedCapas
+		c.ignoredCapabilities = ignoredCapas
+	}
 }
 
 // Sends a LIST command to the server
@@ -186,12 +191,12 @@ func (c *Client) sendCommand(expectedCode int, format string, args ...any) NNTPR
 
 	if err := c.PrintfLine(format, args...); err != nil {
 		c.log.Printf("error sending cmd: %s", err)
-		return NNTPResponse{Status: -1, Message: err.Error()}
+		return NNTPResponse{Status: -1, Message: Msg(err.Error())}
 	}
 
 	resp, err := c.parseResponse(expectedCode)
 	if err != nil {
-		return NNTPResponse{Status: -1, Message: err.Error()}
+		return NNTPResponse{Status: -1, Message: Msg(err.Error())}
 	}
 
 	return resp

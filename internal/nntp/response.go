@@ -2,7 +2,6 @@ package nntp
 
 import (
 	"bufio"
-	"strings"
 )
 
 type (
@@ -18,19 +17,20 @@ type (
 		// 4xx - Command was syntactically correct but failed for some reason
 		//
 		// 5xx - Command unknown, unsupported, unavailable, or syntax error
-		Status int
-
-		// The message follows and could be multi-line
-		Message string
+		Status  int
+		Message ResponseMessage
 	}
 
-	ResponseMessage interface {
-		String() func() string
-	}
-
-	Msg          string
-	MultilineMsg []string
+	Msg      string
+	MultiMsg []string
 )
+
+type ResponseMessage interface {
+	Message()
+}
+
+func (m Msg) Message()      {}
+func (m MultiMsg) Message() {}
 
 var (
 	// An array to check for response codes that are noted as multiline
@@ -54,9 +54,9 @@ const (
 	STATUS_AUTHENTICATION_REQUIRED       int = 480 // Indicates the server is using an authentication extension
 
 	// Authentication via NNTP-AUTH
-	AUTHENTICATION_ACCEPTED                 int = 281
-	STATUS_PASSWORD_REQUIRED                int = 381
-	AUTHENTICATION_FAILED                   int = 481
+	AUTHENTICATION_ACCEPTED                 int = 281 // Successfully authenticated
+	STATUS_PASSWORD_REQUIRED                int = 381 // Username accepted, pending password
+	AUTHENTICATION_FAILED                   int = 481 // No go, you failed
 	AUTHENTICATION_COMMANDS_OUT_OF_SEQUENCE int = 482
 
 	UNAVAILABLE int = 502
@@ -114,9 +114,12 @@ func (c *Client) parseResponse(expectedCode int) (NNTPResponse, error) {
 	c.log.Printf("scan result len: %d", len(scanResult))
 
 	if len(scanResult) == 0 {
-		return NNTPResponse{Status: code, Message: msg}, nil
+		return NNTPResponse{Status: code, Message: Msg(msg)}, nil
 	}
 
-	result := strings.Join(scanResult, " ")
-	return NNTPResponse{Status: code, Message: result}, nil
+	// result := strings.Join(scanResult, " ")
+	return NNTPResponse{
+		Status:  code,
+		Message: MultiMsg(scanResult),
+	}, nil
 }
