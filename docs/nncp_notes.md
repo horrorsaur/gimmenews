@@ -73,3 +73,8 @@ https://groups.google.com/g/comp.mail.uucp/c/E1iFGMkULiU
 [Usenet over NNCP](https://www.complete.org/usenet-over-nncp/)
 [Introduction to Usenet](https://www.binaries4all.com/beginners/downloading.php)
 [Sabnzbd - Open source newsreader written in Python](https://github.com/sabnzbd/sabnzbd/tree/develop)
+
+
+https://www.easynews.com/
+https://giganews.com/
+https://www.eweka.nl/en

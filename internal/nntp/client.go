@@ -1,7 +1,9 @@
 package nntp
 
 import (
+	"bufio"
 	"crypto/tls"
+	"fmt"
 	"log"
 	"net"
 	"net/textproto"
@@ -35,7 +37,9 @@ type (
 		// TODO: Concurrent connections
 		maxConnections uint8
 		// Describes the capabilities of the server state. This can change based on server state (e.g., preauth -> auth)
-		capabilities []string
+		capabilities map[string]bool
+		// Keeps track of capabilities ignored by the client
+		ignoredCapabilities map[string]bool
 	}
 
 	ServerConnectionInfo struct {
@@ -48,44 +52,57 @@ type (
 	}
 )
 
-func NewClient(host, port string, insecure *bool, clogger *log.Logger) *Client {
-	addr := net.JoinHostPort(host, strconv.Itoa(DEFAULT_TLS_PORT))
+var (
+	supportedCapabilities map[string]bool = map[string]bool{
+		"AUTHINFO USER": true,
+		"LIST":          true,
+		"READER":        true,
+	}
+)
 
-	if *insecure {
+func NewClient(host string, insecure bool, clogger *log.Logger) *Client {
+	var (
+		addr     string
+		c        *textproto.Conn
+		err      error
+		connInfo *ServerConnectionInfo
+	)
+
+	addr = net.JoinHostPort(host, strconv.Itoa(DEFAULT_TLS_PORT))
+	clogger.Printf("connecting to '%s'...", addr)
+
+	if insecure {
+		addr = net.JoinHostPort(host, strconv.Itoa(DEFAULT_TCP_PORT))
 		clogger.Printf(`
-			================ WARNING ================
-			Client has been flagged for an unencrypted connection!
-			=========================================
-		`)
-		clogger.Printf("connecting to '%s'...", addr)
+================ WARNING ================
+Client has been flagged for an insecure connection!
+Now connecting to '%s'
+=========================================`, addr)
+		c, err = textproto.Dial("tcp", addr)
+		if err != nil {
+			clogger.Fatal(err)
+		}
+		connInfo = &ServerConnectionInfo{ServerName: "", TLSVersion: 0}
 
-		conn, err := textproto.Dial("tcp", net.JoinHostPort(host, port))
+	} else {
+
+		tlsConf := &tls.Config{InsecureSkipVerify: false}
+		tlsConn, err := tls.Dial("tcp", addr, tlsConf)
 		if err != nil {
 			clogger.Fatal(err)
 		}
 
-		return &Client{
-			Conn:   conn,
-			secure: false,
-			log:    clogger,
-		}
+		connState := tlsConn.ConnectionState()
+		clogger.Printf("Server Name: %s, TLS Version: %d", connState.ServerName, connState.Version)
+		connInfo = &ServerConnectionInfo{ServerName: connState.ServerName, TLSVersion: connState.Version}
+
+		// this lets us use the underlying TLS connection
+		// while taking advantage of textproto abstractions
+		c = textproto.NewConn(tlsConn)
+
 	}
 
-	clogger.Printf("connecting to '%s'... (TLS)", addr)
-	tlsConf := &tls.Config{InsecureSkipVerify: false}
-	conn, err := tls.Dial("tcp", addr, tlsConf)
-	if err != nil {
-		clogger.Fatal(err)
-	}
-
-	connState := conn.ConnectionState()
-	clogger.Printf("Server Name: %s, TLS Version: %d", connState.ServerName, connState.Version)
-	connInfo := ServerConnectionInfo{ServerName: connState.ServerName, TLSVersion: connState.Version}
-
-	// textproto gives us some nice, higher level abstractions from the protocol
-	txConn := textproto.NewConn(conn)
-
-	code, msg, err := txConn.ReadCodeLine(STATUS_AVAILABLE_POSTING_ALLOWED)
+	code, msg, err := c.ReadCodeLine(STATUS_AVAILABLE_POSTING_ALLOWED)
 	if err != nil {
 		clogger.Fatal(err)
 	}
@@ -97,75 +114,85 @@ func NewClient(host, port string, insecure *bool, clogger *log.Logger) *Client {
 	clogger.Printf("GOT %d %s", code, msg)
 
 	return &Client{
-		Conn:     txConn,
-		connInfo: connInfo,
-		secure:   true,
+		Conn:     c,
+		connInfo: *connInfo,
+		secure:   !insecure,
 		log:      clogger,
 	}
 }
 
-// Prompts the client to send a 'CAPABILITIES' command.
+// Sends a CAPABILITIES command to the server
 //
-// Returns a list of capabilities that the server supports
-func (c *Client) GetCapabilities() []string {
-	resp, err := c.sendCommand(STATUS_CAPABILITIES, "CAPABILITIES")
-	if err != nil {
-		c.log.Fatalf("error receiving capabilities response: %s", err)
-	}
-	c.log.Printf("Response: %s", resp)
-	return nil
+// Caches a list of capabilities both supported and not supported by the client
+func (c *Client) SendCapabilities(keyword string) {
+	// keyword is reserved for extension modules
+	resp := c.sendCommand(STATUS_CAPABILITIES, fmt.Sprint("CAPABILITIES ", keyword))
+	c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
+
+	// supportedCapas := make(map[string]bool)
+	// ignoredCapas := make(map[string]bool)
+	// for _, capa := range resp {
+	// 	if supportedCapabilities[capa] {
+	// 		supportedCapas[capa] = true
+	// 	} else {
+	// 		ignoredCapas[capa] = true
+	// 	}
+	// }
+	//
+	// c.log.Printf("Supported Capabilities: %v", supportedCapas)
+	// c.log.Printf("Ignored Capabilities: %v", ignoredCapas)
+	//
+	// c.capabilities = supportedCapas
+	// c.ignoredCapabilities = ignoredCapas
 }
 
-// Indicating capability: LIST
+// Sends a LIST command to the server
+//
 // Syntax
 //
 //	LIST [keyword [wildmat|argument]]
 func (c *Client) List(keyword string) {
-	resp, err := c.sendCommand(215, "LIST "+keyword)
-	if err != nil {
+	resp := c.sendCommand(215, "LIST "+keyword)
+	c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
+}
+
+func (c *Client) Quit() {
+	c.log.Print(c.sendCommand(205, "QUIT"))
+}
+
+// Send sends command raw, that is, unchecked and returns the full response.
+//
+// This will exit if the default bufio Scanner encounters any non-EOF error.
+func (c *Client) Send(command string, expectedStatusCode int) string {
+	if err := c.PrintfLine(command); err != nil {
+		c.log.Fatal("error sending cmd: ", err)
+	}
+
+	var response string
+	s := bufio.NewScanner(c.R)
+	for s.Scan() {
+		response += s.Text()
+	}
+
+	if err := s.Err(); err != nil {
 		c.log.Fatal(err)
 	}
-	c.log.Printf("Response: %s", resp)
+
+	return response
 }
 
-// the IHAVE command is designed for transit, while the
-//    commands indicated by the READER capability are designed for reading
-//    clients.
-
-// Generic send
-func (c *Client) Send(command string, expectedStatusCode int) string {
-	return ""
-}
-
-func (c *Client) sendCommand(expectedCode int, format string, args ...any) ([]string, error) {
+func (c *Client) sendCommand(expectedCode int, format string, args ...any) NNTPResponse {
 	c.log.Printf("sending command '%s' with args '%s'", format, args)
+
 	if err := c.PrintfLine(format, args...); err != nil {
-		c.log.Fatal("error sending cmd: ", err)
-		return nil, err
+		c.log.Printf("error sending cmd: %s", err)
+		return NNTPResponse{Status: -1, Message: err.Error()}
 	}
-	return c.parseResponse(expectedCode)
-}
 
-// If the response is multi-line, ReadCodeLine returns an error.
-//
-// An expectCode <= 0 disables the check of the status code.
-func (c *Client) parseResponse(expectedCode int) ([]string, error) {
-	code, msg, err := c.ReadCodeLine(expectedCode)
+	resp, err := c.parseResponse(expectedCode)
 	if err != nil {
-		c.log.Print("error parsing response: ", err)
-		return nil, err
+		return NNTPResponse{Status: -1, Message: err.Error()}
 	}
 
-	c.log.Printf("GOT %d %s", code, msg)
-	return c.ReadDotLines()
+	return resp
 }
-
-func (c *Client) parseMulti() ([]string, error) {
-	return nil, nil
-}
-
-// TODO:
-// s := bufio.NewScanner(c.R)
-// for s.Scan() {
-// 	fmt.Printf(s.Text())
-// }
