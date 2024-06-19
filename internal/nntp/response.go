@@ -2,6 +2,8 @@ package nntp
 
 import (
 	"bufio"
+	"strconv"
+	"strings"
 )
 
 type (
@@ -70,56 +72,59 @@ const (
 // simple-response = initial-response-line
 // multi-line-response = initial-response-line multi-line-data-block
 func (c *Client) parseResponse(expectedCode int) (NNTPResponse, error) {
-	code, msg, err := c.ReadCodeLine(expectedCode)
+	initial, err := c.ReadLine()
 	if err != nil {
-		c.log.Printf("received error on initial response: %s", err)
+		return NNTPResponse{Status: -1, Message: Msg(initial)}, err
 	}
 
-	c.log.Printf("GOT INITIAL '%d %s'", code, msg)
+	r := strings.NewReader(initial)
+	sc := bufio.NewScanner(r)
+	sc.Split(bufio.ScanWords)
 
-	var multi bool
-	// known multiline codes
-	for _, c := range multilineResponseCodes {
-		if code == c {
+	var (
+		code     int
+		messages []string
+		multi    bool
+	)
+
+	for sc.Scan() {
+
+		token := sc.Text()
+		// check multi-line dot EOF
+		if token[0] == byte('.') {
+			c.log.Printf(`
+reached multi-line EOF
+code: %d
+message len: %d
+message: %s
+			`, code, len(messages), messages)
+
 			multi = true
+			break
 		}
-	}
 
-	// switch code {
-	// case STATUS_PASSWORD_REQUIRED:
-	// 	return NNTPResponse{Status: code, Message: msg}, nil
-	// default:
-	// 	multi = true
-	// }
-
-	var scanResult []string
-	if multi {
-
-		s := bufio.NewScanner(c.R)
-		for s.Scan() {
-			if s.Bytes()[0] == byte('.') {
-				c.log.Printf("reached multi-line response EOF")
-				break
+		if len(token) == 3 {
+			parsedCode, _ := strconv.Atoi(token)
+			if parsedCode != expectedCode {
+				c.log.Printf("parsed status code mismatch. got '%d' but expected '%d'", parsedCode, expectedCode)
 			}
-
-			scanResult = append(scanResult, s.Text())
+			code = parsedCode
+			continue // dont append the status code to the messages slice
 		}
 
-		if err := s.Err(); err != nil {
-			c.log.Printf("got scan error %s", err)
+		messages = append(messages, strings.TrimSpace(token))
+
+		if err := sc.Err(); err != nil {
+			return NNTPResponse{Status: -1, Message: nil}, err
 		}
-
 	}
 
-	c.log.Printf("scan result len: %d", len(scanResult))
+	joined := strings.Join(messages, " ")
+	c.log.Printf("GOT  '%d'  '%s'  Multi?: %t", code, joined, multi)
 
-	if len(scanResult) == 0 {
-		return NNTPResponse{Status: code, Message: Msg(msg)}, nil
+	if multi {
+		return NNTPResponse{Status: code, Message: MultiMsg{joined}}, nil
 	}
 
-	// result := strings.Join(scanResult, " ")
-	return NNTPResponse{
-		Status:  code,
-		Message: MultiMsg(scanResult),
-	}, nil
+	return NNTPResponse{Status: code, Message: Msg(joined)}, nil
 }
