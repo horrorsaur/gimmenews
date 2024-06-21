@@ -2,14 +2,16 @@ package nntp_test
 
 import (
 	"bufio"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/textproto"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/horrorsaur/gimmenews/internal/nntp"
+	"github.com/stretchr/testify/require"
 )
 
 var responses = []string{
@@ -27,76 +29,71 @@ IMPLEMENTATION INN 2.8.0 (20240323 snapshot)
 	`,
 }
 
-var testServer TestServer
-var testClient nntp.Client
+// https://stackoverflow.com/questions/30688685/how-does-one-test-net-conn-in-unit-tests-in-golang
 
-type TestServer struct {
-	net.Conn
-}
+var nntpClient *nntp.Client
 
 func setup() {
 	c, s := net.Pipe()
-	log.Printf("creating fake TCP testing pipe")
-	testClient = nntp.Client{Conn: textproto.NewConn(s)}
-
-	testServer = TestServer{Conn: c}
-	testServer.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	// server writes the initial response
-	n, err := testClient.Conn.W.Write([]byte(responses[0]))
-	if err != nil {
-		panic(err)
-	}
-	log.Printf("wrote %d bytes", n)
+	nntpClient = &nntp.Client{Conn: textproto.NewConn(s)}
 
 	// // a blocking channel, ensuring the server reads until timeout
 	done := make(chan error)
 
 	var response string
-	scanner := bufio.NewScanner(testServer.Conn)
+	scanner := bufio.NewScanner(s)
 	scanner.Split(bufio.ScanWords)
 
-	for scanner.Scan() {
-		switch scanner.Text() {
-		case "CAPABILITIES":
-			response = responses[1] // hard-coded response
-		case "QUIT":
-			response = responses[2]
-		default:
-			response = ""
-			continue
+	// add a 1 second write deadline
+	s.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
+	// server writes the initial response
+	n, _ := c.Write([]byte(responses[0]))
+	fmt.Printf("wrote %d bytes", n)
+	s.Close()
+
+	go func() {
+		for scanner.Scan() {
+			switch scanner.Text() {
+			case "CAPABILITIES":
+				response = responses[1] // hard-coded response
+			case "QUIT":
+				response = responses[2]
+			default:
+				response = ""
+				continue
+			}
+
+			if response != "" {
+				c.Write([]byte(response))
+			}
 		}
 
-		testServer.Write([]byte(response))
+		if err := scanner.Err(); err != nil {
+			done <- err
+		}
+	}()
+
+	scanErr := <-done
+	log.Printf("closing connections... got err: %s", scanErr)
+	// clean up the underlying in-memory pipes
+	if err := c.Close(); err != nil {
+		log.Print(err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		done <- err
+	if err := s.Close(); err != nil {
+		log.Print(err)
 	}
-
-	<-done
-
-	log.Printf("closing connections...")
-
-	testServer.Close()
-	testClient.Close()
 }
 
-// func TestInitialSetup(t *testing.T) {
-// 	setup()
-// 	// go func() {
-// 	// 	setup()
-// 	// }()
-//
-// 	// time.Sleep(5 * time.Second)
-//
-// 	resp, err := testClient.ReadLine()
-// 	if err != nil {
-// 		t.Fatalf(err.Error(), t)
-// 	}
-//
-// 	log.Printf(resp)
-// }
+func TestEnsureInitialResponse(t *testing.T) {
+	setup()
+	dat, err := io.ReadAll(nntpClient.R)
+	if err != nil {
+		log.Print(err)
+	}
+	require.Equal(t, string(dat), responses[0])
+}
 
 // func TestInitialResponse(t *testing.T) {
 // 	setup()
@@ -110,12 +107,28 @@ func setup() {
 // 	require.Equal(t, NNTPResponse{}, initialResponseParse)
 // }
 
-func TestPipeStuff(t *testing.T) {
-	c, s := net.Pipe()
-
-	client := nntp.Client{Conn: s}
-	tlogger := log.New(os.Stdout, "[TEST] ", 1)
-	client := nntp.NewClient("", true, tlogger)
-	log.Printf("client: %v", client)
-	// testClient = nntp.Client{Conn: textproto.NewConn(s)}
-}
+// func TestPipeStuff(t *testing.T) {
+// 	c, s := net.Pipe()
+//
+// 	client := nntp.Client{Conn: textproto.NewConn(s)}
+//
+// 	go func() {
+// 		s.SetWriteDeadline(time.Now().Add(5 * time.Second))
+//
+// 		n, err := c.Write([]byte(responses[0]))
+// 		if err != nil {
+// 			log.Print(err)
+// 		}
+// 		log.Printf("wrote %d", n)
+//
+// 		s.Close()
+// 	}()
+//
+// 	time.Sleep(5 * time.Second)
+//
+// 	dat, err := io.ReadAll(client.R)
+// 	if err != nil {
+// 		log.Print(err)
+// 	}
+// 	log.Printf(string(dat))
+// }
