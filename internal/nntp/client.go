@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/textproto"
 	"strconv"
@@ -29,8 +29,6 @@ type (
 		*textproto.Conn
 
 		connInfo ServerConnectionInfo
-
-		log *log.Logger
 
 		// indicates whether we are using TLS on DEFAULT_TLS_PORT (563)
 		secure bool
@@ -58,9 +56,11 @@ var (
 		"LIST":          true,
 		"READER":        true,
 	}
+
+	clogger = slog.Default()
 )
 
-func NewClient(host string, insecure bool, clogger *log.Logger) *Client {
+func NewClient(host string, insecure bool) *Client {
 	var (
 		addr     string
 		c        *textproto.Conn
@@ -69,18 +69,16 @@ func NewClient(host string, insecure bool, clogger *log.Logger) *Client {
 	)
 
 	addr = net.JoinHostPort(host, strconv.Itoa(DEFAULT_TLS_PORT))
-	clogger.Printf("connecting to '%s'...", addr)
-
+	clogger.Info("attempting connection to", "addr", addr)
 	if insecure {
 		addr = net.JoinHostPort(host, strconv.Itoa(DEFAULT_TCP_PORT))
-		clogger.Printf(`
+		clogger.Warn(`
 ================ WARNING ================
 Client has been flagged for an insecure connection!
-Now connecting to '%s'
-=========================================`, addr)
+=========================================`, "addr", addr)
 		c, err = textproto.Dial("tcp", addr)
 		if err != nil {
-			clogger.Fatal(err)
+			clogger.Error(err.Error())
 		}
 		connInfo = &ServerConnectionInfo{ServerName: "", TLSVersion: 0}
 
@@ -89,11 +87,11 @@ Now connecting to '%s'
 		tlsConf := &tls.Config{InsecureSkipVerify: false}
 		tlsConn, err := tls.Dial("tcp", addr, tlsConf)
 		if err != nil {
-			clogger.Fatal(err)
+			clogger.Error(err.Error())
 		}
 
 		connState := tlsConn.ConnectionState()
-		clogger.Printf("Server Name: %s, TLS Version: %d", connState.ServerName, connState.Version)
+		clogger.Info("Server Name: %s, TLS Version: %d", connState.ServerName, connState.Version)
 		connInfo = &ServerConnectionInfo{ServerName: connState.ServerName, TLSVersion: connState.Version}
 
 		// this lets us use the underlying TLS connection
@@ -104,20 +102,19 @@ Now connecting to '%s'
 
 	code, msg, err := c.ReadCodeLine(STATUS_AVAILABLE_POSTING_ALLOWED)
 	if err != nil {
-		clogger.Fatal(err)
+		clogger.Error(err.Error())
 	}
 
 	if code != STATUS_AVAILABLE_POSTING_ALLOWED {
-		clogger.Fatal(err)
+		clogger.Error(err.Error())
 	}
 
-	clogger.Printf("GOT %d %s", code, msg)
+	clogger.Info("GOT ", "code", code, "msg", msg)
 
 	return &Client{
 		Conn:     c,
 		connInfo: *connInfo,
 		secure:   !insecure,
-		log:      clogger,
 	}
 }
 
@@ -130,7 +127,7 @@ func (c *Client) SendCapabilities(keyword string) {
 
 	switch msg := resp.Message.(type) {
 	case Msg:
-		c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
+		clogger.Info("Received Msg type", "status", resp.Status, "message", resp.Message)
 	case MultiMsg:
 		supportedCapas := make(map[string]bool)
 		ignoredCapas := make(map[string]bool)
@@ -142,9 +139,6 @@ func (c *Client) SendCapabilities(keyword string) {
 				ignoredCapas[capa] = true
 			}
 		}
-
-		c.log.Printf("Supported Capabilities: %v", supportedCapas)
-		c.log.Printf("Ignored Capabilities: %v", ignoredCapas)
 
 		c.capabilities = supportedCapas
 		c.ignoredCapabilities = ignoredCapas
@@ -158,11 +152,11 @@ func (c *Client) SendCapabilities(keyword string) {
 //	LIST [keyword [wildmat|argument]]
 func (c *Client) List(keyword string) {
 	resp := c.sendCommand(215, "LIST "+keyword)
-	c.log.Printf("Status: %d, Message: %s", resp.Status, resp.Message)
+	clogger.Info("Got Response", "status", resp.Status, "message", resp.Message)
 }
 
 func (c *Client) Quit() {
-	c.log.Print(c.sendCommand(205, "QUIT"))
+	c.sendCommand(205, "QUIT")
 }
 
 // Send sends command raw, that is, unchecked and returns the full response.
@@ -170,7 +164,7 @@ func (c *Client) Quit() {
 // This will exit if the default bufio Scanner encounters any non-EOF error.
 func (c *Client) Send(command string, expectedStatusCode int) string {
 	if err := c.PrintfLine(command); err != nil {
-		c.log.Fatal("error sending cmd: ", err)
+		clogger.Error("error sending cmd: ", err)
 	}
 
 	var response string
@@ -180,17 +174,17 @@ func (c *Client) Send(command string, expectedStatusCode int) string {
 	}
 
 	if err := s.Err(); err != nil {
-		c.log.Fatal(err)
+		clogger.Error(err.Error())
 	}
 
 	return response
 }
 
 func (c *Client) sendCommand(expectedCode int, format string, args ...any) NNTPResponse {
-	c.log.Printf("sending command '%s' with args '%s'", format, args)
+	clogger.Info("sending command '%s' with args '%s'", format, args)
 
 	if err := c.PrintfLine(format, args...); err != nil {
-		c.log.Printf("error sending cmd: %s", err)
+		clogger.Info("error sending cmd: %s", err)
 		return NNTPResponse{Status: -1, Message: Msg(err.Error())}
 	}
 
@@ -200,4 +194,9 @@ func (c *Client) sendCommand(expectedCode int, format string, args ...any) NNTPR
 	}
 
 	return resp
+}
+
+// customize the logger
+func SetClientLogger(l *slog.Logger) {
+	clogger = l
 }

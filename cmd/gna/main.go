@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/horrorsaur/gimmenews/internal/nntp"
+	"github.com/horrorsaur/gimmenews/internal/utils"
 	"github.com/joho/godotenv"
 )
 
@@ -72,7 +73,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	f := newLogFile("client.log")
+	f := utils.NewLogFile("client.log", defaultLogPath)
 	defer f.Close()
 
 	// WIP remove
@@ -81,8 +82,7 @@ func main() {
 		f = os.Stdout
 	}
 
-	clogger := log.New(f, "[CLIENT] ", 2)
-	c := nntp.NewClient(host, insecure, clogger)
+	c := nntp.NewClient(host, insecure)
 	defer c.Close()
 
 	c.SendCapabilities("")
@@ -94,14 +94,4 @@ func main() {
 	<-sigs
 	log.Printf("Received quit! Calling disconnect on client...")
 	c.Quit()
-}
-
-func newLogFile(fileName string) *os.File {
-	logFilePath := filepath.Join(defaultLogPath, fileName)
-	file, err := os.Create(logFilePath)
-	if err != nil {
-		log.Printf("couldnt create log file: %s", err)
-	}
-	log.Printf("created log file '%s' at '%s'", fileName, defaultLogPath)
-	return file
 }

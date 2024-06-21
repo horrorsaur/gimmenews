@@ -92,12 +92,7 @@ func (c *Client) parseResponse(expectedCode int) (NNTPResponse, error) {
 		token := sc.Text()
 		// check multi-line dot EOF
 		if token[0] == byte('.') {
-			c.log.Printf(`
-reached multi-line EOF
-code: %d
-message len: %d
-message: %s
-			`, code, len(messages), messages)
+			clogger.Debug("reached multi-line EOF", "code", code, "msg len", len(messages), "messages", messages)
 
 			multi = true
 			break
@@ -106,7 +101,7 @@ message: %s
 		if len(token) == 3 {
 			parsedCode, _ := strconv.Atoi(token)
 			if parsedCode != expectedCode {
-				c.log.Printf("parsed status code mismatch. got '%d' but expected '%d'", parsedCode, expectedCode)
+				clogger.Error("parsed status code mismatch", "parsed", parsedCode, "expected", expectedCode)
 			}
 			code = parsedCode
 			continue // dont append the status code to the messages slice
@@ -120,7 +115,7 @@ message: %s
 	}
 
 	joined := strings.Join(messages, " ")
-	c.log.Printf("GOT  '%d'  '%s'  Multi?: %t", code, joined, multi)
+	clogger.Info("GOT RESPONSE", "code", code, "joined", joined, "multi", multi)
 
 	if multi {
 		return NNTPResponse{Status: code, Message: MultiMsg{joined}}, nil
