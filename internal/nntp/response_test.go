@@ -33,7 +33,7 @@ IMPLEMENTATION INN 2.8.0 (20240323 snapshot)
 
 var nntpClient *nntp.Client
 
-func setup() {
+func setup(t *testing.T) {
 	c, s := net.Pipe()
 	nntpClient = &nntp.Client{Conn: textproto.NewConn(s)}
 
@@ -76,18 +76,20 @@ func setup() {
 
 	scanErr := <-done
 	log.Printf("closing connections... got err: %s", scanErr)
-	// clean up the underlying in-memory pipes
-	if err := c.Close(); err != nil {
-		log.Print(err)
-	}
+	t.Cleanup(func() {
+		// clean up the underlying in-memory pipes
+		if err := c.Close(); err != nil {
+			log.Print(err)
+		}
 
-	if err := s.Close(); err != nil {
-		log.Print(err)
-	}
+		if err := s.Close(); err != nil {
+			log.Print(err)
+		}
+	})
 }
 
 func TestEnsureInitialResponse(t *testing.T) {
-	setup()
+	setup(t)
 	dat, err := io.ReadAll(nntpClient.R)
 	if err != nil {
 		log.Print(err)
