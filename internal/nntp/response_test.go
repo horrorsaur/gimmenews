@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/horrorsaur/gimmenews/internal/nntp"
+	"github.com/stretchr/testify/require"
 )
 
 var responses = []string{
@@ -29,58 +30,79 @@ IMPLEMENTATION INN 2.8.0 (20240323 snapshot)
 
 // https://stackoverflow.com/questions/30688685/how-does-one-test-net-conn-in-unit-tests-in-golang
 
-var nntpClient *nntp.Client
-var ready = make(chan bool)
+var nntpClient nntp.Client
+var clientConfigured bool
 
-func setup(t *testing.T, ready *bool) {
-	c, s := net.Pipe()
-	nntpClient = &nntp.Client{Conn: textproto.NewConn(s)}
+func set(c nntp.Client) bool {
+	nntpClient = c
+	return true
+}
 
-	// // a blocking channel, ensuring the server reads until timeout
-	done := make(chan error)
+func listen(t *testing.T, s net.Conn, done chan bool) error {
+	go func() {
+		defer close(done)
 
-	// add a 1 second write deadline
-	s.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		for {
+			select {
+			case <-time.After(15 * time.Second):
+				done <- true
+			}
+		}
+	}()
+
+	// add a 5 second write deadline
+	s.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
 	// server writes the initial response
-	n, err := c.Write([]byte(responses[0]))
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("wrote %d bytes", n)
+	n, err := s.Write([]byte(responses[0]))
+	require.NoError(t, err)
 
-	fmt.Print("ready ", *ready)
-	// server is ready
-	*ready = true
+	log.Print("wrote bytes: ", n)
+	// t.Parallel()
 
-	fmt.Print("ready ", *ready)
-
-	var response string
 	scanner := bufio.NewScanner(s)
 	scanner.Split(bufio.ScanWords)
 
 	for scanner.Scan() {
+		var response string
 		switch scanner.Text() {
 		case "CAPABILITIES":
 			response = responses[1] // hard-coded response
 		case "QUIT":
 			response = responses[2]
 		default:
-			response = ""
 			continue
 		}
 
 		if response != "" {
-			c.Write([]byte(response))
+			_, err := s.Write([]byte(response))
+			require.NoError(t, err)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		done <- err
+		fmt.Printf("scanner err: %v", err)
+		done <- true
 	}
 
+	<-done
+	return nil
+}
+
+func setup(t *testing.T) error {
+	c, s := net.Pipe()
+
+	cl := nntp.Client{Conn: textproto.NewConn(s)}
+	if ok := set(cl); ok {
+		clientConfigured = true
+	}
+
+	s.Write([]byte(responses[0]))
+
+	// test clean up hooks
 	t.Cleanup(func() {
-		log.Printf("closing connections... got err: %s", <-done)
+		fmt.Print("cleaning up tests...")
+
 		// clean up the underlying in-memory pipes
 		if err := c.Close(); err != nil {
 			log.Print(err)
@@ -90,36 +112,30 @@ func setup(t *testing.T, ready *bool) {
 			log.Print(err)
 		}
 	})
+
+	ready := make(chan bool, 1)
+	if err := listen(t, s, ready); err != nil {
+		return err
+	}
+	return nil
 }
 
 func TestEnsureInitialResponse(t *testing.T) {
-	var (
-		r     bool
-		retry int = 0
-	)
+	setup(t)
 
-	go func() {
-		setup(t, &r)
-	}()
+	if clientConfigured {
+		log.Print("client is ready")
+	}
 
-	fmt.Printf("retry counter %d ready? %v", retry, r)
+	// dat, err := io.ReadAll(nntpClient.R)
+	// require.NoError(t, err)
+	// require.Equal(t, responses[0], string(dat))
+
+	// if run := t.Run("setup", setup); run {
+	// 	<-ready
 	//
-	// for {
-	// 	select {
-	// 	case <-ready:
-	// 		dat, err := io.ReadAll(nntpClient.R)
-	// 		if err != nil {
-	// 			log.Print(err)
-	// 		}
-	// 		require.Equal(t, string(dat), responses[0])
-	// 	default:
-	// 		if retry != 3 {
-	// 			retry++
-	// 			continue
-	// 		}
-	//
-	// 		fmt.Printf("reached max retries!")
-	// 		t.Fail()
-	// 	}
+	// 	dat, err := io.ReadAll(nntpClient.R)
+	// 	require.NoError(t, err)
+	// 	require.Equal(t, responses[0], string(dat))
 	// }
 }
