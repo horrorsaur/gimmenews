@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"github.com/horrorsaur/gimmenews/internal/nntp"
 	"github.com/horrorsaur/gimmenews/internal/utils"
@@ -63,24 +62,17 @@ func main() {
 	godotenv.Load()
 
 	sigs := make(chan os.Signal)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGKILL, syscall.SIGINT)
+	signal.Notify(sigs, os.Interrupt, os.Kill)
 
 	flag.Parse()
 
-	if host == "" && !DEBUG {
+	if host == "" {
 		fmt.Println("The host config option is required.")
 		flag.Usage()
-		os.Exit(1)
 	}
 
 	f := utils.NewLogFile("client.log", defaultLogPath)
 	defer f.Close()
-
-	// WIP remove
-	if DEBUG {
-		// host = "127.0.0.1"
-		f = os.Stdout
-	}
 
 	c := nntp.NewClient(host, insecure)
 	defer c.Close()
@@ -93,5 +85,6 @@ func main() {
 
 	<-sigs
 	log.Printf("Received quit! Calling disconnect on client...")
+
 	c.Quit()
 }
